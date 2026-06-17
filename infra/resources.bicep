@@ -21,10 +21,15 @@ var targetPort = 8000
 
 // When the app already exists, keep its current image so a `provision` that
 // only changes env vars does not reset the running image to the placeholder.
-resource existingMcpApp 'Microsoft.App/containerApps@2024-03-01' existing = if (mcpExists) {
-  name: 'ca-mcp-${resourceToken}'
+// The lookup lives in a separate module to avoid an ARM circular-dependency
+// error (the `existing` reference shares the app's name).
+module fetchMcpImage 'fetch-image.bicep' = if (mcpExists) {
+  name: 'fetch-mcp-image'
+  params: {
+    name: 'ca-mcp-${resourceToken}'
+  }
 }
-var effectiveImage = mcpExists ? existingMcpApp.properties.template.containers[0].image : mcpImage
+var effectiveImage = mcpExists ? fetchMcpImage!.outputs.image : mcpImage
 
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: 'log-${resourceToken}'

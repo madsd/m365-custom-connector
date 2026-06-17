@@ -117,6 +117,15 @@ Leave this tab open; you'll return in Part D.
 **Microsoft Entra SSO registration ID** → used in Part F.**Application ID URI** (e.g. `api://<fqdn>/<client-id>`) → used in Parts D and E as the
      **token audience**.
 
+> **⚠️ Critical — leave the SSO registration's scope field EMPTY.** Do not add a scope
+> value (such as `access_as_user`) to the Teams Dev Portal SSO registration. If a literal
+> scope is stored here, the M365 admin center passes it **verbatim** as a *bare* scope, which
+> Azure AD resolves against Microsoft Graph and rejects with **AADSTS650053**
+> (*"…asked for scope 'access_as_user' that doesn't exist on the resource '00000003-0000-…'"*).
+> With the field empty, the admin center auto-qualifies the request to
+> `<client-id>/.default`, which is what you want. If you already added one, remove it and
+> recreate the connector.
+
 ---
 
 ## Part D — Finalize the Entra app registration
@@ -158,12 +167,22 @@ Now that you know the audience, enable authentication and redeploy.
 
 ```powershell
 azd env set ENTRA_TENANT_ID "<your-tenant-id>"
-# Use the Application ID URI generated in Part C. You may include both URIs, comma-separated.
-azd env set ENTRA_AUDIENCE "api://<fqdn>/<client-id>"
+# IMPORTANT: include ALL THREE audience forms, comma-separated. The admin center's SSO flow
+# requests the "<client-id>/.default" scope, which yields a v2 token whose `aud` is the bare
+# client-id GUID — NOT the api://auth-… URI. List every form so validation matches:
+azd env set ENTRA_AUDIENCE "api://<fqdn>/<client-id>,api://<client-id>,<client-id>"
 azd env set AUTH_REQUIRED true
 
 azd up
 ```
+
+> **⚠️ Critical — audience must include the client-id GUID.** A common failure is a **401 on
+> the connector's "Authorize" / test-authentication step** with the server logging
+> *"rejected: Audience doesn't match"*. This happens when `ENTRA_AUDIENCE` only lists the
+> `api://auth-…` URI but the `.default` token's `aud` is the plain client-id GUID. Listing all
+> three forms above (the generated `api://<fqdn>/<client-id>` URI, `api://<client-id>`, and the
+> bare `<client-id>` GUID) covers every token shape. The server splits `ENTRA_AUDIENCE` on
+> commas and accepts a token matching any one of them.
 
 Verify the lockdown — unauthenticated MCP calls must now be rejected while `/health` stays open:
 
@@ -256,6 +275,17 @@ Call the connector (`search` then `fetch`),Summarize results, andCite PubMed a
 
 5. Cross-check a cited PMID by opening its PubMed URL.
 
+> **⚠️ Give it time to be picked up.** A newly published connector is **not** invoked
+> immediately. Until Copilot's orchestrator indexes it into its tool catalog, the same prompt
+> is answered by the **built-in web-search tool** instead — you'll see Copilot run
+> `site:pubmed.ncbi.nlm.nih.gov …` web searches and cite public pages, and the Container App
+> logs show **no** `CallToolRequest`. This is expected for the first ~15+ minutes after
+> publish/rollout (it can occasionally take longer), **not** an auth or config fault. Once
+> indexed, re-running the same query routes to your connector and the logs show
+> `request of type CallToolRequest` → `POST /mcp 200 OK` with live `eutils.ncbi.nlm.nih.gov`
+> calls. **The definitive validation signal is a `CallToolRequest` in the server logs**, since
+> the connector may lack an M365 Copilot license to test in the UI.
+
 ---
 
 ## Troubleshooting
@@ -312,8 +342,11 @@ Call the connector (`search` then `fetch`),Summarize results, andCite PubMed a
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
+| Copilot answers with public/web PubMed pages and never calls the connector | (a) Connector not yet indexed by the orchestrator (propagation), or (b) not rolled out to the test user | Wait ~15+ min after publish/rollout and retry; confirm the connector is **Visible to everyone** (or the user is in the staged-rollout group). The proof of success is `request of type CallToolRequest` in the server logs — web searches with `site:pubmed.ncbi.nlm.nih.gov` mean it fell back to web search. |
 | Copilot says it can't reach the connector | Base URL missing `/mcp`, or wrong FQDN | Re-check the **Base URL** in Part F. |
-| `/mcp` returns 401 with a real user token | Audience mismatch | Ensure `ENTRA_AUDIENCE` equals the **Application ID URI** from Part C and that URI is in the app's `identifierUris` (Part D). |
+| `/mcp` returns 401 with a real user token | Audience mismatch | Set `ENTRA_AUDIENCE` to **all three** forms (`api://<fqdn>/<client-id>,api://<client-id>,<client-id>`) — the `.default` token's `aud` is the bare client-id GUID. Server log shows *"rejected: Audience doesn't match"*. See Part E callout. |
+| Connector **"Authorize" / test-authentication** fails with **AADSTS650053** *"…scope 'access_as_user' that doesn't exist on the resource '00000003-0000-…'"* | A literal scope value is stored on the Teams Dev Portal SSO registration; the admin center passes it as a *bare* scope resolved against Microsoft Graph | **Remove** the scope value from the SSO registration so the admin center auto-qualifies to `<client-id>/.default`, then recreate the connector. See Part C callout. |
+| Connector **"Authorize"** returns a **500** then a **400 (malformed)** on the draft, even after consent succeeds | Server rejected the test token (audience mismatch) so test-authentication 500s and **Create** never enables | Broaden `ENTRA_AUDIENCE` as above (Part E), confirm the new revision is live, then re-Authorize. |
 | 401 mentioning "client application is not allowed" | Token store not authorized | Add `ab3be6b7-f5df-413d-ac2d-abf1e3fd9c0b` under **Expose an API → Authorized client applications** (Part D). |
 | Tokens never issued / consent loop | Missing redirect URI | Add `https://teams.microsoft.com/api/platform/v1.0/oAuthConsentRedirect` to the **Web** platform (Part D). |
 | Consent prompt appears, after **Accept** the dialog says *"Authentication for connector was cancelled or closed before completion"* and the connector stays **Draft**; consent tab console shows *"No Parent window found."* | The `login.microsoftonline.com` consent response sends `Cross-Origin-Opener-Policy: same-origin`, which nulls `window.opener` so Teams' `oAuthConsentRedirect` can't post the success back. Not a pop-up blocker. | See the **⚠️ Entra SSO "Authorize" popback** callout above. **Fix:** strip the `Cross-Origin-Opener-Policy` header from the auth/teams document responses (browser-automation interceptor or a debugging proxy) for the duration of **Authorize** — the opener survives, `notifySuccess` posts back, **Create** enables, and the connection goes **Draft → Ready**. Fallback: Microsoft support ticket with the repro in the callout. |
