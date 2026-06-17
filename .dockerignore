@@ -1,0 +1,12 @@
+.git/
+.azure/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+*.md
+docs/
+infra/
+.vscode/
+.idea/

@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+
+# azd / infra
+.azure/
+
+# Local env
+.env
+*.local
+*.local.md
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/

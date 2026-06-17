@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {
+      "value": "${AZURE_ENV_NAME}"
+    },
+    "location": {
+      "value": "${AZURE_LOCATION}"
+    },
+    "entraTenantId": {
+      "value": "${ENTRA_TENANT_ID}"
+    },
+    "entraAudience": {
+      "value": "${ENTRA_AUDIENCE}"
+    },
+    "authRequired": {
+      "value": "${AUTH_REQUIRED=false}"
+    },
+    "ncbiApiKey": {
+      "value": "${NCBI_API_KEY}"
+    },
+    "ncbiEmail": {
+      "value": "${NCBI_EMAIL}"
+    },
+    "mcpExists": {
+      "value": "${SERVICE_MCP_RESOURCE_EXISTS=false}"
+    }
+  }
+}
